@@ -9,17 +9,18 @@ dspSolver::dspSolver(dspLinkConfig& linkConfig) : LinkConfig(linkConfig) {
     int link_num = LinkConfig.GetNumLink();
     int joint_num = LinkConfig.GetNumJoint();
 
-    /// You have to initialize following variables
+    /// You have to initialize following variables      - Checked
     int size = 3*(link_num-1);
+    int constraints = 2*joint_num;
     q.resize(size);
     qdot.resize(size);
     qddot.resize(size);
     M.resize(size, size);
     M_inv.resize(size, size);
-    J.resize(2*joint_num, size);
-    J_dot.resize(2*joint_num, size);
+    J.resize(constraints, size);
+    J_dot.resize(constraints, size);
     F_ext.resize(size);
-    lambda.resize(2*joint_num);
+    lambda.resize(constraints);
 
     q.setZero();
     qdot.setZero();
@@ -95,7 +96,7 @@ bool dspSolver::CalculateConstraintError(Eigen::VectorXd& error_c) {
 }
 
 // Implement this function
-bool dspSolver::Make_M(void) { 
+bool dspSolver::Make_M(void) {      //checked
     /// make mass matrix : M
     for(int i=1; i<LinkConfig.GetNumLink(); i++){
         dspLink* link = LinkConfig.GetLink(i);
@@ -113,7 +114,7 @@ bool dspSolver::Make_M(void) {
 bool dspSolver::Make_J(void) {
     /// make Jacobian matrix which has first-order partial derivatives of vector q's components : J
 
-//J has rows = #constraints and cols = #elements in q
+//J has rows = #constraints = 2*num_joints and cols = #elements in q = 3*(num_links-1)
 
     for(int i=0; i<LinkConfig.GetNumJoint(); i++){
         //two constraints per joint
@@ -121,7 +122,7 @@ bool dspSolver::Make_J(void) {
 
         //for each joint, we need each link's pointer, their angles, and the position of P (and Q if prismatic)
         int link1_id = joint->GetLink1ID(), link2_id = joint->GetLink2ID();
-        dspLink* link1 = LinkConfig.GetLink(link1_id), *link2 = LinkConfig.GetLink(link2_id);
+        dspLink *link1 = LinkConfig.GetLink(link1_id), *link2 = LinkConfig.GetLink(link2_id);
 
         double x1,y1,theta1, x2,y2,theta2;
         link1->GetQ(x1,y1,theta1);
@@ -200,6 +201,7 @@ bool dspSolver::Make_J(void) {
             partial_x1 = Q1y*cos(theta1) - P1y*cos(theta1) - P1x*sin(theta1) + Q1x*sin(theta1);
             partial_y1 = P1x*cos(theta1) - Q1x*cos(theta1) - P1y*sin(theta1) + Q1y*sin(theta1);
             partial_theta1 = (P1y*cos(theta1) + P1x*sin(theta1))*(P1y*cos(theta1) - Q1y*cos(theta1) + P1x*sin(theta1) - Q1x*sin(theta1)) + (P1x*cos(theta1) - P1y*sin(theta1))*(P1x*cos(theta1) - Q1x*cos(theta1) - P1y*sin(theta1) + Q1y*sin(theta1)) - (P1x*cos(theta1) - Q1x*cos(theta1) - P1y*sin(theta1) + Q1y*sin(theta1))*(x1 - x2 + P1x*cos(theta1) - P2x*cos(theta2) - P1y*sin(theta1) + P2y*sin(theta2)) - (P1y*cos(theta1) - Q1y*cos(theta1) + P1x*sin(theta1) - Q1x*sin(theta1))*(y1 - y2 + P1y*cos(theta1) - P2y*cos(theta2) + P1x*sin(theta1) - P2x*sin(theta2));
+
             //link2
             partial_x2 = P1y*cos(theta1) - Q1y*cos(theta1) + P1x*sin(theta1) - Q1x*sin(theta1);
             partial_y2 = Q1x*cos(theta1) - P1x*cos(theta1) + P1y*sin(theta1) - Q1y*sin(theta1);
@@ -221,10 +223,13 @@ bool dspSolver::Make_J(void) {
             //link1
             partial_x1 = 0;
             partial_y1 = 0;
+            //partial_theta1 = 1; if we just use angle constraint
             partial_theta1 = - (P1x*cos(theta1) - Q1x*cos(theta1) - P1y*sin(theta1) + Q1y*sin(theta1))*(P2x*cos(theta2) - Q2x*cos(theta2) - P2y*sin(theta2) + Q2y*sin(theta2)) - (P1y*cos(theta1) - Q1y*cos(theta1) + P1x*sin(theta1) - Q1x*sin(theta1))*(P2y*cos(theta2) - Q2y*cos(theta2) + P2x*sin(theta2) - Q2x*sin(theta2));
+
             //link2
             partial_x2 = 0;
             partial_y2 = 0;
+            //partial_theta2 = -1; if we just use angle constraint
             partial_theta2 = (P1x*cos(theta1) - Q1x*cos(theta1) - P1y*sin(theta1) + Q1y*sin(theta1))*(P2x*cos(theta2) - Q2x*cos(theta2) - P2y*sin(theta2) + Q2y*sin(theta2)) + (P1y*cos(theta1) - Q1y*cos(theta1) + P1x*sin(theta1) - Q1x*sin(theta1))*(P2y*cos(theta2) - Q2y*cos(theta2) + P2x*sin(theta2) - Q2x*sin(theta2));
             //zero for the rest
 
@@ -262,8 +267,8 @@ bool dspSolver::Make_J_dot(void) {
         link2->GetQ(x2,y2,theta2);
 
         double x1dot,y1dot,theta1dot, x2dot,y2dot,theta2dot;
-        link1->GetQDot(x1,y1,theta1);
-        link2->GetQDot(x2,y2,theta2);
+        link1->GetQDot(x1dot,y1dot,theta1dot);
+        link2->GetQDot(x2dot,y2dot,theta2dot);
 
         //get P1 and P2
         Eigen::Vector2d P1, P2;
@@ -354,13 +359,15 @@ bool dspSolver::Make_J_dot(void) {
             //link 1
             partial_x1_dt = 0;
             partial_y1_dt = 0;
+            //partial_theta1_dt = 0;
             partial_theta1_dt = theta1dot*(P1y*sin(theta1) - Q1y*sin(theta1) - P1x*cos(theta1) + Q1x*cos(theta1))*(P2x*sin(theta2) - Q2x*sin(theta2) + P2y*cos(theta2) - Q2y*cos(theta2)) - theta1dot*(P1x*sin(theta1) - Q1x*sin(theta1) + P1y*cos(theta1) - Q1y*cos(theta1))*(P2y*sin(theta2) - Q2y*sin(theta2) - P2x*cos(theta2) + Q2x*cos(theta2)) + theta2dot*(P1x*sin(theta1) - Q1x*sin(theta1) + P1y*cos(theta1) - Q1y*cos(theta1))*(P2y*sin(theta2) - Q2y*sin(theta2) - P2x*cos(theta2) + Q2x*cos(theta2)) - theta2dot*(P1y*sin(theta1) - Q1y*sin(theta1) - P1x*cos(theta1) + Q1x*cos(theta1))*(P2x*sin(theta2) - Q2x*sin(theta2) + P2y*cos(theta2) - Q2y*cos(theta2));
 
             //link 2
             partial_x2_dt = 0;
             partial_y2_dt = 0;
+            //partial_theta2_dt = 0;
             partial_theta2_dt = (P1x*sin(theta1) - Q1x*sin(theta1) + P1y*cos(theta1) - Q1y*cos(theta1))*(P2y*sin(theta2) - Q2y*sin(theta2) - P2x*cos(theta2) + Q2x*cos(theta2))*theta1dot - (P1y*sin(theta1) - Q1y*sin(theta1) - P1x*cos(theta1) + Q1x*cos(theta1))*(P2x*sin(theta2) - Q2x*sin(theta2) + P2y*cos(theta2) - Q2y*cos(theta2))*theta1dot - (P1x*sin(theta1) - Q1x*sin(theta1) + P1y*cos(theta1) - Q1y*cos(theta1))*(P2y*sin(theta2) - Q2y*sin(theta2) - P2x*cos(theta2) + Q2x*cos(theta2))*theta2dot + (P1y*sin(theta1) - Q1y*sin(theta1) - P1x*cos(theta1) + Q1x*cos(theta1))*(P2x*sin(theta2) - Q2x*sin(theta2) + P2y*cos(theta2) - Q2y*cos(theta2))*theta2dot;
-            
+
             if(link1_id !=0){
                 J_dot(row, 3*(link1_id-1)) = partial_x1_dt;
                 J_dot(row, 3*(link1_id-1)+1) = partial_y1_dt;
@@ -392,7 +399,7 @@ bool dspSolver::Make_F_ext(void) {
 }
 
 // Implement this function
-bool dspSolver::CalcLinAlg(void) {
+bool dspSolver::CalcLinAlg(void) {  //checked
     /// calculate second derivative of vector q : qddot
 
     M_inv = M.inverse();
@@ -433,10 +440,8 @@ bool dspSolver::UpdateNextInfo(double timestep) {
     /// also save them in class variables for next step
     qdot += qddot*timestep;
     q += qdot*timestep;
-
     SetQ();
     SetQDot();
-
     return true;
 }
 
@@ -451,7 +456,6 @@ bool dspSolver::SetQDot(void) {
         w = qdot(3*(i-1)+2);
         link->SetQDot(velx, vely, w);
     }
-
     return true;
 }
 
@@ -466,7 +470,6 @@ bool dspSolver::SetQ(void) {
         theta = q(3*(i-1)+2);
         link->SetQ(x,y,theta);
     }
-
     return true;
 }
 
